@@ -1,5 +1,7 @@
 # Gestión de Promociones — Kódigo Fuente
 
+![CI](https://github.com/davidsilva131/kodigo-fuente-prueba-tecnica/actions/workflows/ci.yml/badge.svg)
+
 Aplicación web para **registrar y gestionar promociones** de los POS de Kódigo Fuente, controlando su estado (`Programada → Activa → Finalizada`) y su vigencia.
 
 > Prueba técnica. Prioridad: calidad sobre cantidad.

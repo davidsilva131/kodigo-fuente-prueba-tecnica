@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Lint backend
+        working-directory: backend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+      - name: Lint frontend
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: promotions_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: promotions_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Fallo explícito si falta el secret requerido
+        if: env.POSTGRES_PASSWORD == ''
+        run: |
+          echo "::error::Falta el GitHub Secret POSTGRES_PASSWORD (Settings → Secrets and variables → Actions)."
+          exit 1
+      - name: Test backend (integración con Postgres real)
+        working-directory: backend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+      - name: Test frontend
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagen backend
+        run: docker build -t promociones-backend:ci ./backend
+      - name: Construir imagen frontend
+        run: docker build -t promociones-frontend:ci ./frontend
+
+  smoke-test:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_DB: promociones
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fallo explícito si falta el secret requerido
+        if: env.POSTGRES_PASSWORD == ''
+        run: |
+          echo "::error::Falta el GitHub Secret POSTGRES_PASSWORD (Settings → Secrets and variables → Actions)."
+          exit 1
+      - name: Levantar la aplicación con docker compose
+        run: docker compose up -d --build
+      - name: Esperar readiness y verificar /health
+        run: |
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/health || true)
+            if [ "$code" = "200" ]; then
+              echo "✓ /health respondió 200 en el intento $i"
+              curl -s http://localhost:3000/health
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "✗ /health no respondió 200 a tiempo"
+          docker compose logs --tail=100 backend db
+          exit 1
+      - name: Verificar frontend (nginx)
+        run: |
+          curl -s -f -o /dev/null http://localhost:8080/ && echo "✓ frontend responde en :8080"
+          curl -s -f http://localhost:8080/health && echo
+          curl -s -f http://localhost:8080/api/promotions/summary && echo
