@@ -1,3 +1,5 @@
+resolver ${NGINX_DNS_RESOLVER} valid=10s ipv6=off;
+
 server {
     listen ${PORT};
     server_name _;
@@ -6,15 +8,26 @@ server {
     index index.html;
 
     # API hacia el backend (BACKEND_INTERNAL_URL lo define el entorno:
-    # Railway → http://backend.railway.internal:3000 · compose → http://backend:3000)
+    # Railway → https://backend-production-*.up.railway.app · compose → http://backend:3000)
+    # proxy_pass con variable + resolver: nginx re-resuelve el upstream por request
+    # (con proxy_pass estático resolvería una sola vez al arrancar y un redeploy
+    # del backend dejaría el proxy apuntando a una IP reciclada).
     location /api/ {
-        proxy_pass ${BACKEND_INTERNAL_URL};
+        set $promo_upstream ${BACKEND_INTERNAL_URL};
+        proxy_pass $promo_upstream;
+        proxy_ssl_server_name on;
+        proxy_buffer_size 16k;
+        proxy_buffers 4 32k;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 
     location = /health {
-        proxy_pass ${BACKEND_INTERNAL_URL};
+        set $promo_upstream ${BACKEND_INTERNAL_URL};
+        proxy_pass $promo_upstream;
+        proxy_ssl_server_name on;
+        proxy_buffer_size 16k;
+        proxy_buffers 4 32k;
         proxy_set_header Host $host;
     }
 
