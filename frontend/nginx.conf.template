@@ -18,7 +18,10 @@ server {
         proxy_ssl_server_name on;
         proxy_buffer_size 16k;
         proxy_buffers 4 32k;
-        proxy_set_header Host $host;
+        # CRÍTICO: al proxear al dominio público del backend, el Host DEBE ser el
+        # del backend — si se reenvía el del frontend, el edge de Railway enruta
+        # el request de vuelta al frontend (bucle frontend→backend→frontend).
+        proxy_set_header Host ${BACKEND_HOST};
         proxy_set_header X-Real-IP $remote_addr;
     }
 
@@ -28,7 +31,7 @@ server {
         proxy_ssl_server_name on;
         proxy_buffer_size 16k;
         proxy_buffers 4 32k;
-        proxy_set_header Host $host;
+        proxy_set_header Host ${BACKEND_HOST};
     }
 
     # SPA: cualquier otra ruta sirve index.html
