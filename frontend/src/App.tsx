@@ -30,7 +30,6 @@ export default function App() {
     }
   }, []);
 
-  // oxlint-disable-next-line react/set-state-in-effect -- patrón estándar de carga inicial de datos
   useEffect(() => {
     void load();
   }, [load]);

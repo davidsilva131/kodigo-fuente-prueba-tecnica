@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.28.1",
   "description": "API de gestión de promociones — prueba técnica Kódigo Fuente",
   "engines": {
     "node": ">=20"
