@@ -1,0 +1,25 @@
+server {
+    listen ${PORT};
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # API hacia el backend (BACKEND_INTERNAL_URL lo define el entorno:
+    # Railway → http://backend.railway.internal:3000 · compose → http://backend:3000)
+    location /api/ {
+        proxy_pass ${BACKEND_INTERNAL_URL};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location = /health {
+        proxy_pass ${BACKEND_INTERNAL_URL};
+        proxy_set_header Host $host;
+    }
+
+    # SPA: cualquier otra ruta sirve index.html
+    location / {
+        try_files $uri /index.html;
+    }
+}
