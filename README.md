@@ -39,6 +39,10 @@ curl http://localhost:3000/health        # → {"status":"ok","db":"up"} (HTTP 2
 
 Detener: `docker compose down` (conserva los datos en el volumen `db-data`). Borrar datos: `docker compose down -v`.
 
+> El contenedor `frontend` renderiza su configuración de nginx desde una plantilla con
+> envsubst (`PORT`, `BACKEND_INTERNAL_URL`, `BACKEND_HOST`, `NGINX_DNS_RESOLVER`) — los
+> valores del archivo ya son válidos para Docker Compose.
+
 ## Desarrollo local
 
 ```bash
@@ -56,7 +60,7 @@ pnpm dev
 ## Tests y calidad
 
 ```bash
-# Backend: 35 tests (unit + integración con Postgres real)
+# Backend: 40 tests (unit + integración con Postgres real)
 cd backend && pnpm lint && pnpm test && pnpm build
 
 # Frontend: 8 tests (componentes + flujos, fetch mockeado)
@@ -73,7 +77,7 @@ Los tests de integración del backend requieren Postgres en `localhost:5433` con
 | GET | `/health` | 200 si app + BD operativas (503 si no) |
 | GET | `/api/promotions` | Lista con nombre del target |
 | POST | `/api/promotions` | Crear (estado inicial `scheduled`) |
-| PATCH | `/api/promotions/:id` | Editar (rechazado si `finished`) |
+| PATCH | `/api/promotions/:id` | Editar (rechazado si `finished`; **400** si el resultado queda inválido) |
 | PATCH | `/api/promotions/:id/status` | Transición `scheduled → active → finished` |
 | DELETE | `/api/promotions/:id` | Eliminar (solo `scheduled`) |
 | GET | `/api/promotions/summary` | Contadores por estado + `valid_today` |
@@ -85,6 +89,23 @@ Los tests de integración del backend requieren Postgres en `localhost:5433` con
 El smoke test levanta la app con `docker compose up`, espera a los contenedores y
 verifica `GET /health` → 200; si no responde, el pipeline falla.
 `POSTGRES_PASSWORD` se inyecta como GitHub Secret (nunca está en el repo).
+
+## Deploy (Railway)
+
+Demostración en vivo del proyecto (mismos Dockerfiles):
+
+- **Frontend:** https://frontend-production-6136.up.railway.app
+- **Backend API:** https://backend-production-a751.up.railway.app
+- **Base de datos:** plugin PostgreSQL gestionado por Railway (credenciales solo en las variables del proyecto, nunca en el repo)
+
+Servicios: `backend` y `frontend` (Dockerfiles) + plugin `Postgres`. Variables por servicio:
+
+| Servicio | Variables |
+|---|---|
+| backend | `PORT`, `POSTGRES_HOST/PORT/DB/USER/PASSWORD` (referencias al plugin) |
+| frontend | `PORT`, `NGINX_DNS_RESOLVER=8.8.8.8`, `BACKEND_INTERNAL_URL` (URL pública del backend), `BACKEND_HOST` (host del backend) |
+
+Redesplegar el último build: `railway redeploy -s <servicio> -y`. Detalles de la configuración del proxy en [`DECISIONS.md`](./DECISIONS.md) §5.
 
 ## Decisiones técnicas
 

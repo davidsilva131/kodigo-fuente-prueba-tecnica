@@ -13,13 +13,13 @@ La prueba dejaba libertad de elección con justificación obligatoria. Este docu
 | Peso del contenedor | ~200 MB runtime | ~500 MB+ (PHP-FPM) |
 | Velocidad de iteración | Alta | Media (generación de scaffolding, ORM) |
 
-**Justificación:** el equipo ya trabaja React + Vite; mantener TypeScript en el backend reduce el cambio de contexto, permite compartir contratos de datos y acelera el desarrollo. Express es mínimo y predecible para un CRUD de una tabla de dominio — sin magia de framework. Las validaciones se declaran con **zod**, que da tipos de TypeScript y guardas de runtime en una sola fuente.
+**Justificación:** el equipo ya trabaja React + Vite; mantener TypeScript en el backend reduce el cambio de contexto, permite compartir contratos de datos y acelera el desarrollo. Express es mínimo y predecible para un CRUD de una tabla de dominio — sin magia de framework. Las validaciones se declaran con **zod**, que da tipos de TypeScript y guardas de runtime en una sola fuente. La **actualización** además valida el **estado resultante** (fila actual + campos recibidos) con las mismas reglas que la creación: un PATCH parcial nunca deja la promoción inválida ni produce un 500 por violación de constraints (400 con detalle del campo).
 
 ## 2. Base de datos: PostgreSQL (vs MongoDB, SQL Server)
 
 **Elegido:** PostgreSQL 16.
 
-- **Integridad referencial real**: las promociones referencian productos/categorías. Con `FOREIGN KEY` + `CHECK` constraints, las reglas de negocio (`ends_at > starts_at`, porcentaje ≤ 100, estados válidos) se aplican incluso si alguien escribe SQL a mano.
+- **Integridad referencial real**: las promociones referencian productos/categorías. Con `FOREIGN KEY` + `CHECK` constraints, las reglas de negocio (`ends_at > starts_at`, porcentaje 1–100, estados válidos) se aplican incluso si alguien escribe SQL a mano.
 - **SQL Server** se descartó por licenciamiento y peso de contenedor.
 - **MongoDB** se descartó porque el modelo es claramente relacional (catálogo + promociones) y las constraints de documento no cubren referencias entre colecciones.
 
@@ -34,7 +34,7 @@ promotions (id, name, target_type product|categoría, target_id,
 ```
 
 - `target_type` + `target_id` modelan "producto **o** categoría" sin tablas pivote.
-- Las reglas de negocio viven además como `CHECK` en la BD (defensa en profundidad), con validación previa en la API (zod).
+- Las reglas de negocio viven además como `CHECK` en la BD (defensa en profundidad), con validación previa en la API (zod). La **migración 002** endureció el CHECK de porcentaje al rango completo **1–100** (la 001 solo acotaba ≤ 100): una inserción SQL directa con 0.5 o 150 es rechazada por la BD.
 
 ## 3. Migraciones: SQL plano idempotente al boot (vs ORM/migración por herramienta)
 
@@ -50,12 +50,21 @@ La especificación pide `Programada → Activa → Finalizada`. Se implementó c
 - Una promoción **Finalizada es inmutable** (PATCH devuelve 409).
 - Solo se puede **eliminar** en estado `Programada` (409 si no).
 - "**Vigente hoy**" se calcula por fechas (`starts_at <= now() <= ends_at`), independiente del estado manual: la vigencia es un hecho temporal; el estado es una decisión de negocio.
+- La **actualización** valida el **estado resultante** (fila actual + cambios) con las mismas reglas de creación antes de escribir; si el resultado es inválido → 400 con el campo problemático (nunca 500). Esto cubre casos como pasar de Monto fijo a Porcentaje dejando un valor fuera de rango, o editar solo la fecha de fin dejándola antes del inicio actual.
 
 ## 5. Frontend: React + Vite, servido por nginx en producción
 
 **Elegido:** React 19 + Vite 8 + TypeScript, con el build estático servido por **nginx** (multi-stage Dockerfile: `node build → nginx`).
 
 **Por qué nginx y no `vite dev`/`vite preview`:** es el patrón estándar de producción para apps Vite (así lo recomienda la documentación oficial). Vite sigue siendo el build tool y React la tecnología de UI — "estático" se refiere solo al servidor del bundle. nginx además actúa como **reverse proxy** de `/api` y `/health` hacia el backend (un solo origen, sin CORS en producción). En desarrollo, Vite hace el proxy equivalente.
+
+**Configuración por plantilla (envsubst):** la imagen oficial de nginx renderiza `nginx.conf.template` con las variables de entorno del servicio — `PORT` (puerto de escucha), `BACKEND_INTERNAL_URL` (URL del backend), `BACKEND_HOST` (host del backend para el `Host` header) y `NGINX_DNS_RESOLVER`. Tres detalles críticos aprendidos en el deploy a Railway:
+
+1. **DNS dinámico**: `proxy_pass` usa una variable (`set $upstream …`) con `resolver`, para que nginx re-resuelva el upstream por request. Con URL estática nginx resuelve **una sola vez al arrancar** y un redeploy del backend deja el proxy apuntando a una IP reciclada (timeouts).
+2. **Host header (bucle con el edge de la plataforma)**: al proxear al **dominio público** del backend, el `Host` debe ser el del backend (`BACKEND_HOST`); si se reenvía el del frontend, el edge de Railway enruta por Host y devuelve el request al frontend → bucle infinito (timeouts anidados + headers acumulados).
+3. **Buffers de respuesta**: el edge añade headers grandes de respuesta; `proxy_buffer_size 16k` / `proxy_buffers 4 32k` evita el 502 `upstream sent too big header`.
+
+En Docker Compose el mismo template funciona con la red interna del compose (`backend:3000`, resolver Docker `127.0.0.11`).
 
 **Validación client-side** espeja la del backend (obligatorios, rango de porcentaje, fechas) para feedback inmediato; el backend sigue siendo la autoridad (validación server-side siempre).
 
@@ -65,7 +74,7 @@ La especificación pide `Programada → Activa → Finalizada`. Se implementó c
 
 ## 7. Tests: vitest + supertest (backend) · vitest + Testing Library (frontend)
 
-- **Backend:** tests de unidad (máquina de estados, validaciones) + **integración contra Postgres real** (CRUD completo, transiciones, resumen, `/health` 200 y 503). 35 tests.
+- **Backend:** tests de unidad (máquina de estados, validaciones) + **integración contra Postgres real** (CRUD completo, transiciones, resumen, `/health` 200 y 503). **40 tests** — los 5 últimos son regresión del fix de PATCH parciales (resultado inválido → 400) e idempotencia de migraciones.
 - **Frontend:** componentes y flujos de usuario con fetch mockeado (validación del formulario, creación, activación, banner de error). 8 tests.
 - El runner de CI levanta Postgres como servicio (`services:`), por lo que los tests de integración corren contra una BD real, no mocks.
 
@@ -103,3 +112,7 @@ Se dispara en `push` a `main` y manualmente (`workflow_dispatch`).
 | ORM (Prisma/TypeORM) | 3 tablas; SQL plano + zod cubre el caso sin capa extra |
 | Redux / react-query | Sub-ingeniería para una vista; estado local alcanza |
 | `vite preview` en el contenedor | Menos "producción"; nginx aporta proxy y es el estándar Vite |
+
+## 12. Deploy en Railway
+
+La misma imagen Docker se despliega en Railway (demostración en vivo): servicios `backend`/`frontend` (Dockerfiles) + plugin `Postgres` gestionado. El frontend proxya al backend por su **dominio público** con el template de nginx descrito en §5 (resolver dinámico + `Host` del backend + buffers). Las credenciales del plugin viven en las variables del proyecto de Railway (referencias `${{Postgres.*}}` resueltas al vincular), nunca en el repositorio. URLs en el `README.md`.
