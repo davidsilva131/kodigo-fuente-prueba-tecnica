@@ -3,7 +3,7 @@ import express from 'express';
 import { z } from 'zod';
 import { corsOrigins, type Config } from './config.js';
 import type { DbPool } from './db.js';
-import { HttpError } from './errors.js';
+import { HttpError, ValidationError } from './errors.js';
 import { healthRouter } from './routes/health.js';
 import { promotionsRouter } from './routes/promotions.js';
 import { referencesRouter } from './routes/references.js';
@@ -30,6 +30,10 @@ export function createApp(pool: DbPool, config: Config) {
           details: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
         },
       });
+      return;
+    }
+    if (err instanceof ValidationError) {
+      res.status(400).json({ error: { message: err.message, details: err.issues } });
       return;
     }
     if (err instanceof HttpError) {

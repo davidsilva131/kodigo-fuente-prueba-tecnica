@@ -1,10 +1,30 @@
 import { z } from 'zod';
+import type { DiscountType } from './types.js';
 
 export const targetTypeSchema = z.enum(['product', 'category']);
 export const discountTypeSchema = z.enum(['percent', 'fixed']);
 export const statusSchema = z.enum(['scheduled', 'active', 'finished']);
 
 const isoDate = z.string().datetime({ offset: true });
+
+// --- Reglas de negocio compartidas (creación y actualización usan las mismas) ---
+
+function validPercentRange(d: { discount_type?: DiscountType; discount_value?: number }): boolean {
+  if (d.discount_type !== 'percent' || d.discount_value === undefined) return true;
+  return d.discount_value >= 1 && d.discount_value <= 100;
+}
+
+function validDateOrder(d: { starts_at?: string; ends_at?: string }): boolean {
+  if (d.starts_at === undefined || d.ends_at === undefined) return true;
+  return d.ends_at > d.starts_at;
+}
+
+function targetPairComplete(d: { target_type?: 'product' | 'category'; target_id?: number }): boolean {
+  return (d.target_type !== undefined) === (d.target_id !== undefined);
+}
+
+const PERCENT_MESSAGE = 'Si el tipo de descuento es Porcentaje, el valor debe estar entre 1 y 100';
+const DATE_ORDER_MESSAGE = 'La fecha de fin debe ser posterior a la fecha de inicio';
 
 /** Campos base compartidos por creación y actualización. */
 const baseFields = z.object({
@@ -26,34 +46,17 @@ const baseFields = z.object({
  * - si es 'percent', el valor debe estar entre 1 y 100
  */
 export const createPromotionSchema = baseFields
-  .refine((d) => d.ends_at > d.starts_at, {
-    message: 'La fecha de fin debe ser posterior a la fecha de inicio',
-    path: ['ends_at'],
-  })
-  .refine(
-    (d) => d.discount_type !== 'percent' || (d.discount_value >= 1 && d.discount_value <= 100),
-    {
-      message: 'Si el tipo de descuento es Porcentaje, el valor debe estar entre 1 y 100',
-      path: ['discount_value'],
-    },
-  );
+  .refine(validDateOrder, { message: DATE_ORDER_MESSAGE, path: ['ends_at'] })
+  .refine(validPercentRange, { message: PERCENT_MESSAGE, path: ['discount_value'] });
 
 export const updatePromotionSchema = baseFields
   .partial()
-  .refine(
-    (d) =>
-      d.discount_type !== 'percent' ||
-      d.discount_value === undefined ||
-      (d.discount_value >= 1 && d.discount_value <= 100),
-    {
-      message: 'Si el tipo de descuento es Porcentaje, el valor debe estar entre 1 y 100',
-      path: ['discount_value'],
-    },
-  )
-  .refine((d) => d.starts_at === undefined || d.ends_at === undefined || d.ends_at > d.starts_at, {
-    message: 'La fecha de fin debe ser posterior a la fecha de inicio',
-    path: ['ends_at'],
-  });
+  .refine(targetPairComplete, {
+    message: 'target_type y target_id deben enviarse juntos',
+    path: ['target_type'],
+  })
+  .refine(validPercentRange, { message: PERCENT_MESSAGE, path: ['discount_value'] })
+  .refine(validDateOrder, { message: DATE_ORDER_MESSAGE, path: ['ends_at'] });
 
 export const statusUpdateSchema = z.object({
   status: statusSchema,

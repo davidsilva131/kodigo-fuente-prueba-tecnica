@@ -81,6 +81,14 @@ describe('updatePromotionSchema', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('exige enviar target_type y target_id juntos (o ninguno)', () => {
+    expect(updatePromotionSchema.safeParse({ target_id: 2 }).success).toBe(false);
+    expect(updatePromotionSchema.safeParse({ target_type: 'category' }).success).toBe(false);
+    expect(
+      updatePromotionSchema.safeParse({ target_type: 'category', target_id: 2 }).success,
+    ).toBe(true);
+  });
 });
 
 describe('statusUpdateSchema', () => {

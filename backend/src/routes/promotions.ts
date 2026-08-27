@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import type { DbPool } from '../db.js';
-import { HttpError } from '../errors.js';
+import { HttpError, ValidationError } from '../errors.js';
 import { transitionError } from '../stateMachine.js';
-import type { Status } from '../types.js';
+import type { PromotionRow, Status } from '../types.js';
 import {
   createPromotionSchema,
   statusUpdateSchema,
@@ -112,9 +112,25 @@ export function promotionsRouter(pool: DbPool): Router {
       if (Object.keys(data).length === 0) {
         throw new HttpError(400, 'No se enviaron campos para actualizar');
       }
-      const targetBoth = (data.target_type !== undefined) === (data.target_id !== undefined);
-      if (!targetBoth) {
-        throw new HttpError(400, 'target_type y target_id deben enviarse juntos');
+      // El estado resultante debe cumplir las mismas reglas que la creación:
+      // valida la fila efectiva (actual + cambios) antes de escribir, para que
+      // un PATCH parcial nunca deje la promoción inválida (ni provoque un 500
+      // por violación de constraints en la base de datos).
+      const iso = (v: string | Date): string =>
+        v instanceof Date ? v.toISOString() : v;
+      const effective: PromotionRow = {
+        ...promo,
+        ...data,
+        discount_value: data.discount_value ?? Number(promo.discount_value),
+        starts_at: iso(data.starts_at ?? promo.starts_at),
+        ends_at: iso(data.ends_at ?? promo.ends_at),
+        target_id: data.target_id ?? promo.target_id,
+      };
+      const check = createPromotionSchema.safeParse(effective);
+      if (!check.success) {
+        throw new ValidationError(
+          check.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+        );
       }
       if (data.target_type && data.target_id !== undefined) {
         await assertTargetExists(data.target_type, data.target_id);

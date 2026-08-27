@@ -43,6 +43,13 @@ afterAll(async () => {
   await pool.end();
 });
 
+describe('migraciones', () => {
+  it('son idempotentes: no re-aplican sobre una base ya migrada', async () => {
+    const applied = await runMigrations(pool);
+    expect(applied).toEqual([]);
+  });
+});
+
 describe('POST /api/promotions', () => {
   it('crea una promoción en estado Programada', async () => {
     const res = await request(app).post('/api/promotions').send(makePromo());
@@ -125,6 +132,39 @@ describe('PATCH /api/promotions/:id', () => {
   it('devuelve 404 para una promoción inexistente', async () => {
     const res = await request(app).patch('/api/promotions/9999').send({ name: 'X' });
     expect(res.status).toBe(404);
+  });
+
+  it('rechaza 400 pasar de Monto fijo a Porcentaje dejando el valor fuera de rango', async () => {
+    const created = await request(app)
+      .post('/api/promotions')
+      .send(makePromo({ discount_type: 'fixed', discount_value: 150 }));
+    const res = await request(app)
+      .patch(`/api/promotions/${created.body.id}`)
+      .send({ discount_type: 'percent' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.some((d: { path: string }) => d.path === 'discount_value')).toBe(true);
+  });
+
+  it('rechaza 400 editar solo la fecha de fin dejándola antes del inicio actual', async () => {
+    const created = await request(app)
+      .post('/api/promotions')
+      .send(makePromo({ starts_at: days(5), ends_at: days(10) }));
+    const res = await request(app)
+      .patch(`/api/promotions/${created.body.id}`)
+      .send({ ends_at: days(1) });
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.some((d: { path: string }) => d.path === 'ends_at')).toBe(true);
+  });
+
+  it('rechaza 400 un valor fuera de rango con tipo Porcentaje vigente', async () => {
+    const created = await request(app)
+      .post('/api/promotions')
+      .send(makePromo({ discount_type: 'percent', discount_value: 20 }));
+    const res = await request(app)
+      .patch(`/api/promotions/${created.body.id}`)
+      .send({ discount_value: 150 });
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.some((d: { path: string }) => d.path === 'discount_value')).toBe(true);
   });
 });
 
