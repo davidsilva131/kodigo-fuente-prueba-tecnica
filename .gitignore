@@ -1,5 +1,7 @@
 node_modules/
 dist/
 .env
+.railway/
+.hermes/
 *.log
-.DS_Store.railway/
+.DS_Store
